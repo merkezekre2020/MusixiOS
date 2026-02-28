@@ -76,74 +76,98 @@ jobs:
       - name: Install xcpretty
         run: gem install xcpretty
       
-      - name: Build Archive (Unsigned)
+      - name: Build Project (Verify Compilation)
         run: |
           PROJECT_NAME="${{ steps.find_project.outputs.project_name }}"
           SCHEME="${{ steps.detect_scheme.outputs.scheme }}"
           CONFIGURATION="${{ github.event.inputs.configuration }}"
           
-          # Build archive with raw output for debugging
-          echo "Building archive with scheme: $SCHEME, configuration: $CONFIGURATION"
+          echo "=== Step 1: Verifying compilation ==="
           echo "Project: ${{ steps.find_project.outputs.project_path }}"
+          echo "Scheme: $SCHEME"
+          echo "Configuration: $CONFIGURATION"
           
-          # First try with xcpretty
-          set -o pipefail
+          # First do a simple build to verify it compiles
+          xcodebuild build \
+            -project "${{ steps.find_project.outputs.project_path }}" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "platform=iOS Simulator,name=iPhone 15" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee build/build-check.log
+          
+          BUILD_STATUS=${PIPESTATUS[0]}
+          
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "::error::Build verification failed with exit code $BUILD_STATUS"
+            echo "=== Build log ==="
+            cat build/build-check.log
+            exit 1
+          fi
+          
+          echo "✅ Build verification successful"
+      
+      - name: Build Archive (Unsigned)
+        run: |
+          PROJECT_NAME="${{ steps.find_project.outputs.project_name }}"
+          SCHEME="${{ steps.detect_scheme.outputs.scheme }}"
+          CONFIGURATION="${{ github.event.inputs.configuration }}"
+          ARCHIVE_PATH="$(pwd)/build/$PROJECT_NAME.xcarchive"
+          
+          echo "=== Step 2: Creating archive ==="
+          echo "Archive path: $ARCHIVE_PATH"
+          
+          # Remove any existing archive
+          rm -rf "$ARCHIVE_PATH"
+          
+          # Build archive
           xcodebuild archive \
             -project "${{ steps.find_project.outputs.project_path }}" \
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
-            -archivePath "build/$PROJECT_NAME.xcarchive" \
+            -archivePath "$ARCHIVE_PATH" \
             -destination "generic/platform=iOS" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ENABLE_BITCODE=NO \
-            2>&1 | tee build/xcodebuild.log | xcpretty --color || true
+            2>&1 | tee build/xcodebuild-archive.log | xcpretty --color
           
-          BUILD_STATUS=${PIPESTATUS[0]}
+          ARCHIVE_STATUS=${PIPESTATUS[0]}
           
-          # If failed, retry without pipefail and xcpretty to see full error
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "::warning::Build with xcpretty failed, retrying without formatting..."
-            xcodebuild archive \
-              -project "${{ steps.find_project.outputs.project_path }}" \
-              -scheme "$SCHEME" \
-              -configuration "$CONFIGURATION" \
-              -archivePath "build/$PROJECT_NAME.xcarchive" \
-              -destination "generic/platform=iOS" \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              ENABLE_BITCODE=NO \
-              2>&1 | tee build/xcodebuild-raw.log
-            BUILD_STATUS=${PIPESTATUS[0]}
-          fi
-          
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "::error::xcodebuild failed with exit code $BUILD_STATUS"
-            echo "=== Full build log ==="
-            cat build/xcodebuild.log 2>/dev/null || cat build/xcodebuild-raw.log
+          if [ $ARCHIVE_STATUS -ne 0 ]; then
+            echo "::error::Archive creation failed with exit code $ARCHIVE_STATUS"
+            echo "=== Archive log ==="
+            cat build/xcodebuild-archive.log
             exit 1
           fi
           
-          # Check if archive was created
-          if [ ! -d "build/$PROJECT_NAME.xcarchive" ]; then
-            echo "::error::Archive creation failed - archive directory not found"
+          # Verify archive was created
+          if [ ! -d "$ARCHIVE_PATH" ]; then
+            echo "::error::Archive directory not found at: $ARCHIVE_PATH"
+            echo "Current directory: $(pwd)"
             echo "Build directory contents:"
             ls -la build/
             exit 1
           fi
           
-          echo "Archive created successfully at: build/$PROJECT_NAME.xcarchive"
+          echo "✅ Archive created successfully at: $ARCHIVE_PATH"
+          echo "Archive contents:"
+          ls -la "$ARCHIVE_PATH"
       
       - name: Create IPA from Archive
         run: |
           PROJECT_NAME="${{ steps.find_project.outputs.project_name }}"
+          ARCHIVE_PATH="$(pwd)/build/$PROJECT_NAME.xcarchive"
+          
+          echo "Looking for archive at: $ARCHIVE_PATH"
           
           # Check archive exists
-          ARCHIVE_PATH="build/$PROJECT_NAME.xcarchive"
           if [ ! -d "$ARCHIVE_PATH" ]; then
             echo "::error::Archive not found at $ARCHIVE_PATH"
+            echo "Current directory: $(pwd)"
             echo "Contents of build directory:"
             ls -la build/
             exit 1

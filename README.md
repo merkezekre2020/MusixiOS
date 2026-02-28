@@ -3,7 +3,7 @@
 [![iOS](https://img.shields.io/badge/iOS-15.0%2B-blue)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.7%2B-orange)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-3.0%2B-green)](https://developer.apple.com/xcode/swiftui/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 
 A beautiful, full-featured music player application for iOS built with **SwiftUI**, featuring synchronized lyrics, dynamic backgrounds, and a modern MVVM architecture.
 
@@ -152,7 +152,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 

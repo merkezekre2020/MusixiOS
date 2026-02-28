@@ -74,6 +74,7 @@ jobs:
           SCHEME="${{ steps.detect_scheme.outputs.scheme }}"
           CONFIGURATION="${{ github.event.inputs.configuration }}"
           
+          # Build archive
           xcodebuild archive \
             -project "${{ steps.find_project.outputs.project_path }}" \
             -scheme "$SCHEME" \
@@ -84,17 +85,47 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             ENABLE_BITCODE=NO \
-            | xcpretty --color
+            | xcpretty --color || true
+          
+          # Check if archive was created
+          if [ ! -d "build/$PROJECT_NAME.xcarchive" ]; then
+            echo "::error::Archive creation failed"
+            exit 1
+          fi
       
       - name: Create IPA from Archive
         run: |
           PROJECT_NAME="${{ steps.find_project.outputs.project_name }}"
           
+          # Check archive exists
+          ARCHIVE_PATH="build/$PROJECT_NAME.xcarchive"
+          if [ ! -d "$ARCHIVE_PATH" ]; then
+            echo "::error::Archive not found at $ARCHIVE_PATH"
+            echo "Contents of build directory:"
+            ls -la build/
+            exit 1
+          fi
+          
+          echo "Archive contents:"
+          find "$ARCHIVE_PATH" -name "*.app" -type d
+          
+          # Find .app bundle in archive
+          APP_BUNDLE=$(find "$ARCHIVE_PATH" -name "*.app" -type d | head -n 1)
+          
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "::error::No .app bundle found in archive"
+            echo "Archive structure:"
+            ls -la "$ARCHIVE_PATH/"
+            exit 1
+          fi
+          
+          echo "Found app bundle: $APP_BUNDLE"
+          
           # Create Payload directory
           mkdir -p build/Payload
           
           # Copy .app bundle to Payload
-          cp -r "build/$PROJECT_NAME.xcarchive/Products/Applications/"* "build/Payload/"
+          cp -r "$APP_BUNDLE" "build/Payload/"
           
           # Create IPA (unsigned)
           cd build

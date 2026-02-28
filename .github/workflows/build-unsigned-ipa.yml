@@ -50,6 +50,11 @@ jobs:
           echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
           echo "project_path=$PROJECT_FILE" >> $GITHUB_OUTPUT
       
+      - name: List Available Schemes
+        run: |
+          echo "Available schemes in project:"
+          xcodebuild -project "${{ steps.find_project.outputs.project_path }}" -list 2>&1 | grep -A 20 "Schemes:" || echo "Could not list schemes"
+      
       - name: Auto-detect Scheme
         id: detect_scheme
         run: |
@@ -79,7 +84,9 @@ jobs:
           
           # Build archive with raw output for debugging
           echo "Building archive with scheme: $SCHEME, configuration: $CONFIGURATION"
+          echo "Project: ${{ steps.find_project.outputs.project_path }}"
           
+          # First try with xcpretty
           set -o pipefail
           xcodebuild archive \
             -project "${{ steps.find_project.outputs.project_path }}" \
@@ -90,27 +97,44 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGN_STYLE=Manual \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             ENABLE_BITCODE=NO \
-            2>&1 | tee build/xcodebuild.log | xcpretty --color
+            2>&1 | tee build/xcodebuild.log | xcpretty --color || true
           
           BUILD_STATUS=${PIPESTATUS[0]}
+          
+          # If failed, retry without pipefail and xcpretty to see full error
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "::warning::Build with xcpretty failed, retrying without formatting..."
+            xcodebuild archive \
+              -project "${{ steps.find_project.outputs.project_path }}" \
+              -scheme "$SCHEME" \
+              -configuration "$CONFIGURATION" \
+              -archivePath "build/$PROJECT_NAME.xcarchive" \
+              -destination "generic/platform=iOS" \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              ENABLE_BITCODE=NO \
+              2>&1 | tee build/xcodebuild-raw.log
+            BUILD_STATUS=${PIPESTATUS[0]}
+          fi
           
           if [ $BUILD_STATUS -ne 0 ]; then
             echo "::error::xcodebuild failed with exit code $BUILD_STATUS"
             echo "=== Full build log ==="
-            cat build/xcodebuild.log
+            cat build/xcodebuild.log 2>/dev/null || cat build/xcodebuild-raw.log
             exit 1
           fi
           
           # Check if archive was created
           if [ ! -d "build/$PROJECT_NAME.xcarchive" ]; then
             echo "::error::Archive creation failed - archive directory not found"
-            echo "=== Full build log ==="
-            cat build/xcodebuild.log
+            echo "Build directory contents:"
+            ls -la build/
             exit 1
           fi
+          
+          echo "Archive created successfully at: build/$PROJECT_NAME.xcarchive"
       
       - name: Create IPA from Archive
         run: |
@@ -125,26 +149,41 @@ jobs:
             exit 1
           fi
           
-          echo "Archive contents:"
-          find "$ARCHIVE_PATH" -name "*.app" -type d
+          echo "Archive found at: $ARCHIVE_PATH"
+          echo "Archive structure:"
+          find "$ARCHIVE_PATH" -type d | head -20
           
           # Find .app bundle in archive
           APP_BUNDLE=$(find "$ARCHIVE_PATH" -name "*.app" -type d | head -n 1)
           
           if [ -z "$APP_BUNDLE" ]; then
             echo "::error::No .app bundle found in archive"
-            echo "Archive structure:"
-            ls -la "$ARCHIVE_PATH/"
+            echo "Full archive structure:"
+            ls -laR "$ARCHIVE_PATH/" | head -50
             exit 1
           fi
           
           echo "Found app bundle: $APP_BUNDLE"
           
+          # Check app bundle validity
+          if [ ! -d "$APP_BUNDLE" ]; then
+            echo "::error::App bundle is not a valid directory"
+            exit 1
+          fi
+          
           # Create Payload directory
           mkdir -p build/Payload
           
           # Copy .app bundle to Payload
-          cp -r "$APP_BUNDLE" "build/Payload/"
+          cp -R "$APP_BUNDLE" "build/Payload/"
+          
+          if [ $? -ne 0 ]; then
+            echo "::error::Failed to copy app bundle to Payload"
+            exit 1
+          fi
+          
+          echo "App bundle copied to Payload"
+          ls -la build/Payload/
           
           # Create IPA (unsigned)
           cd build

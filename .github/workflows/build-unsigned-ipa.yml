@@ -68,13 +68,19 @@ jobs:
       - name: Create Build Directory
         run: mkdir -p build
       
+      - name: Install xcpretty
+        run: gem install xcpretty
+      
       - name: Build Archive (Unsigned)
         run: |
           PROJECT_NAME="${{ steps.find_project.outputs.project_name }}"
           SCHEME="${{ steps.detect_scheme.outputs.scheme }}"
           CONFIGURATION="${{ github.event.inputs.configuration }}"
           
-          # Build archive
+          # Build archive with raw output for debugging
+          echo "Building archive with scheme: $SCHEME, configuration: $CONFIGURATION"
+          
+          set -o pipefail
           xcodebuild archive \
             -project "${{ steps.find_project.outputs.project_path }}" \
             -scheme "$SCHEME" \
@@ -84,12 +90,25 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
             ENABLE_BITCODE=NO \
-            | xcpretty --color || true
+            2>&1 | tee build/xcodebuild.log | xcpretty --color
+          
+          BUILD_STATUS=${PIPESTATUS[0]}
+          
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "::error::xcodebuild failed with exit code $BUILD_STATUS"
+            echo "=== Full build log ==="
+            cat build/xcodebuild.log
+            exit 1
+          fi
           
           # Check if archive was created
           if [ ! -d "build/$PROJECT_NAME.xcarchive" ]; then
-            echo "::error::Archive creation failed"
+            echo "::error::Archive creation failed - archive directory not found"
+            echo "=== Full build log ==="
+            cat build/xcodebuild.log
             exit 1
           fi
       
